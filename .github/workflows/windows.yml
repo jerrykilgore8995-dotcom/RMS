@@ -1,0 +1,42 @@
+name: Windows VST3 and bench
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: rmx-build-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          mkdir bench
+          g++ -O3 -std=c++20 -Wall -Wextra tests/bench.cpp -o bench/rmx_bench
+          bench/rmx_bench > bench/measurements.csv
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: RMX16-Measurements
+          path: |
+            bench/measurements.csv
+            VALIDATION.md
+            AMBIENCE-COMPARISON.csv
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S . -B build -A x64
+      - run: cmake --build build --config Release --target RMX16_VST3 --parallel 3
+      - run: |
+          $bundle = 'build/RMX16_artefacts/Release/VST3/RMX16.vst3'
+          if (!(Test-Path "$bundle/Contents/x86_64-win/RMX16.vst3")) { throw 'Missing x64 VST3 binary.' }
+          New-Item -ItemType Directory dist
+          Copy-Item $bundle dist -Recurse
+          Copy-Item README.md,VALIDATION.md,PRESETS.md,CHANGELOG.md,AMBIENCE-COMPARISON.csv dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RMX16-Windows-x64-VST3
+          path: dist
