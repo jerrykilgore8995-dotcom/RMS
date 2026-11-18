@@ -14,6 +14,8 @@ base=rep(base,'const float duration=std::max(5.f,(sp.shape==pan?60.f:85.f)*setti
 base=rep(base,'const float amp=.105f*envelope;', 'const float amp=.105f*envelope*(settings.program==nonlin2?std::pow(std::max(.001f,t),1.41893564f)*std::pow(std::max(.001f,1-t),2.37573676f):1.f);')
 rows=list(csv.DictReader(open('tests/nevo_spectral_targets.csv')))
 rows=[r for r in rows if not r['setting'].startswith('Mono')]
+extra={(r['mode'],float(r['setting'])):{k:v for k,v in r.items() if k not in ('mode','setting')} for r in csv.DictReader(open('tests/nevo_band_stereo_envelope.csv'))}
+for r in rows:r.update(extra[(r['mode'],float(r['setting']))])
 bands=[125,250,500,1000,2000,4000,8000,16000]
 filters={f:butter(2,[f/2**.5,f*2**.5],fs=48000,btype='bandpass',output='sos') for f in bands}
 def build(s):
@@ -42,7 +44,7 @@ def metrics(mode,setting):
  return d
 def family(k):
  if k.endswith('_db'):return 'spectrum'
- if k.endswith('_rt'):return 'band_decay'
+ if k.endswith('_rt') or k.endswith('_t95'):return 'band_decay'
  if k.endswith('_corr') or k=='corr':return 'stereo'
  if k.startswith('d'):return 'density'
  if k.startswith('e'):return 'envelope'
@@ -85,8 +87,15 @@ s=rep(s,'inGain=dbGain(settings.input);','calMode=p==ambience || p==nonlin2;\n  
 s=rep(s,'time=0; inputPeak=0;','time=0; inputPeak=0;calState.fill(0);')
 s=rep(s,'++time;\n        for(auto& channel:out)','if(calMode) for(size_t ch=0;ch<2;++ch){calState[ch]+=calPole*(out[ch]-calState[ch]);out[ch]-=calMix*calState[ch];}\n        ++time;\n        for(auto& channel:out)')
 s=rep(s,'float inGain=1,outGain=1,inputPeak=0;','std::array<float,2> calState{}; float calPole=0,calMix=0; bool calMode=false;\n    float inGain=1,outGain=1,inputPeak=0;')
+# Vary actual gated reflection density only for NonLin 2.
+s=rep(s,'for(const auto& tap:taps)','for(size_t j=0;j<activeTaps;++j)')
+s=rep(s,'const float v=source.get(tap.age);','const auto& tap=taps[j];\n                    const float v=source.get(tap.age);')
+s=rep(s,'for(size_t i=0;i<taps.size();++i)','activeTaps=settings.program==nonlin2?static_cast<size_t>(nevo2("N_TAPS",96.f)):96u;\n        for(size_t i=0;i<activeTaps;++i)')
+s=rep(s,'static_cast<float>(taps.size())','static_cast<float>(activeTaps)')
+s=rep(s,'std::array<Tap,96> taps {};','std::array<Tap,512> taps {}; size_t activeTaps=96;')
+s=rep(s,'const float amp=.105f*envelope*','const float amp=.105f*std::sqrt(96.f/static_cast<float>(activeTaps))*envelope*')
 build(s)
-specs=[('ambience',['A_BLEND','A_SIZE','A_RT','A_EARLY','A_DIFF','A_HZ','A_HRT','A_HP','A_LCUT'],[(.05,.3),(.5,1.2),(.65,1.25),(.1,3),(0.5,1.8),(1500,12000),(.2,1.5),(200,3500),(.2,1)]),('nonlin',['N_BASE','N_SCALE','N_POWER','N_RISE','N_FALL','N_HP','N_LCUT'],[(60,160),(25,90),(.4,.95),(.2,2.5),(.8,3.5),(200,3500),(.2,1)])]
+specs=[('ambience',['A_BLEND','A_SIZE','A_RT','A_EARLY','A_DIFF','A_HZ','A_HRT','A_HP','A_LCUT'],[(.05,.3),(.5,1.2),(.65,1.25),(.1,3),(0.5,1.8),(1500,12000),(.2,1.5),(200,3500),(.2,1)]),('nonlin',['N_BASE','N_SCALE','N_POWER','N_RISE','N_FALL','N_HP','N_LCUT','N_TAPS'],[(60,160),(25,90),(.4,.95),(.2,2.5),(.8,3.5),(200,3500),(.2,1),(96,512)])]
 best={}
 for mode,names,bounds in specs:
  subset=[r for r in rows if r['mode']==mode][::2]
