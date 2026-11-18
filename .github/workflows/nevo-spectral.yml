@@ -1,0 +1,55 @@
+name: NEVO spectral calibration and VST3
+on:
+  push:
+    branches: [calibration/ambience-nonlin]
+    paths: ['.github/workflows/nevo-spectral.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      OPENBLAS_NUM_THREADS: 1
+      OMP_NUM_THREADS: 1
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install numpy scipy
+      - run: python tests/nevo_spectral_fit.py | tee fit.log
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: NEVO-stage2-measurements
+          path: |
+            spectral-results/
+            fit.log
+  windows:
+    needs: fit
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: NEVO-stage2-measurements
+          path: stage2
+      - run: |
+          if (!(Test-Path stage2/spectral-results/Engine.hpp)) { throw 'No optimized engine' }
+          Copy-Item stage2/spectral-results/Engine.hpp src/Engine.hpp -Force
+          Copy-Item stage2/spectral-results spectral-results -Recurse
+          cmake -S . -B build -A x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build --config Release --target RMX16_VST3 --parallel 3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory dist
+          Copy-Item build/RMX16_artefacts/Release/VST3/RMX16.vst3 dist -Recurse
+      - run: pip install pedalboard numpy scipy
+      - run: python tests/nevo_vst_verify.py dist/RMX16.vst3
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: NEVO-stage2-candidate-Windows
+          path: |
+            dist/
+            spectral-results/
